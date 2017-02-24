@@ -1,0 +1,130 @@
+---
+title: "run_analysis"
+author: "B. Li"
+date: "February 12, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Final Project
+
+## Preparation
+
+Load the libraries.
+
+```{r}
+library(dplyr)
+library(reshape2)
+```
+
+## Load the data
+
+Assume the data package has already been downloaded and unzipped in the working directory. Here we load the data.
+
+```{r}
+path <- file.path(getwd(), "UCI HAR Dataset")
+subjectTrain <- read.table(file.path(path, "train", "subject_train.txt"))
+subjectTest  <- read.table(file.path(path, "test" , "subject_test.txt" ))
+activityTrain <- read.table(file.path(path, "train", "y_train.txt"))
+activityTest <- read.table(file.path(path, "test", "y_test.txt"))
+dataTrain <- read.table(file.path(path, "train", "x_train.txt"))
+dataTest <- read.table(file.path(path, "test", "x_test.txt"))
+features <- read.table(file.path(path, "features.txt"))
+activityLabels <- read.table(file.path(path, "activity_labels.txt"))
+```
+
+## Extract only the mean() and std() data
+
+Get the column indices of the mean() and std() data, and extract these data from the training and the test sets.
+
+```{r}
+colnames(features) <- c("num", "name")
+index <- features$num[grep("mean\\(\\)|std\\(\\)", features$name)]
+dataTrain <- dataTrain[, index]
+dataTest <- dataTest[, index]
+```
+
+## Merge the training and test data
+
+Merge the training and test sets, and add the subject and activity values.
+
+```{r}
+colnames(subjectTrain) <- "Subject"
+colnames(subjectTest) <- "Subject"
+colnames(activityTrain) <- "ActivityNum"
+colnames(activityTest) <- "ActivityNum"
+mergedDataTrain <- cbind(subjectTrain, activityTrain, dataTrain)
+mergedDataTest <- cbind(subjectTest, activityTest, dataTest)
+mergedData <- rbind(mergedDataTrain, mergedDataTest)
+mergedData <- arrange(mergedData, Subject, ActivityNum)
+colnames(mergedData)
+```
+
+The third to the last columns have column names being V1, V2, ...
+These names are the indices of the mean() and std() data. 
+
+## Process the merged data
+
+Melt the data from the short wide format to the long thin format. Name the "V1, V2, ..." column as "FeatureCode"
+
+```{r}
+finalData <- melt(mergedData, id.vars = c("Subject", "ActivityNum"), variable.name = "FeatureCode")
+```
+
+Remove the "V" from column FeatureCode, and convert this column to numeric.
+
+```{r}
+finalData$FeatureCode <- as.numeric(sub("V", "", finalData$FeatureCode))
+```
+
+Add the feature names and the activity names.
+
+```{r}
+features2 <- features
+colnames(features2) <- c("FeatureCode", "FeatureName")
+finalData <- left_join(finalData, features2, by = "FeatureCode")
+colnames(activityLabels) <- c("ActivityNum", "ActivityName")
+finalData <- left_join(finalData, activityLabels, by = "ActivityNum")
+finalData <- select(finalData, Subject, ActivityNum, ActivityName, FeatureCode, FeatureName, value)
+head(finalData)
+```
+
+Go through FeatureName and identify all the elements. 
+```{r}
+grepls <- function (text) {
+  grepl(text, finalData$FeatureName)
+}
+finalData$Domain <- factor(grepls("^t") + grepls("^f") * 2, labels = c("time","frequency"))
+finalData$BodyOrGravity <- factor(grepls("Body") + grepls("Gravity") * 2, labels = c("body", "gravity"))
+finalData$Instrument <- factor(grepls("Acc") + grepls("Gyro") * 2, labels = c("accelerometer", "gyroscope"))
+finalData$IsJerk <- grepls("Jerk")
+finalData$IsMagnitude <- grepls("Mag")
+finalData$MeanOrStd <- factor(grepls("mean\\(\\)") + grepls("std\\(\\)") * 2, labels = c("mean", "std"))
+finalData$Axis <- factor(grepls("-X") + grepls("-Y") * 2 + grepls("-Z") * 3 + (!grepls("-X|-Y|-Z")) * 4, labels = c("X", "Y", "Z", "nonAxis"))
+```
+
+Move the "value" column to the last column.
+
+```{r}
+finalData <- select(finalData, -value, value)
+head(finalData)
+tail(finalData)
+```
+
+## Creates a second, independent tidy data set with the average of each variable for each activity and each subject
+
+```{r}
+tidyData <- finalData %>% group_by(Subject, ActivityName, Domain, BodyOrGravity, Instrument, IsJerk, IsMagnitude, MeanOrStd, Axis) %>% summarise(count = n(), average = mean(value))
+head(tidyData)
+tail(tidyData)
+```
+
+## Writes the tidy data set
+
+```{r}
+write.table(tidyData, file = "tidyData.txt", quote = FALSE, row.names = FALSE)
+```
+
